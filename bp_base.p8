@@ -1,13 +1,13 @@
 pico-8 cartridge // http://www.pico-8.com
 version 18
 __lua__
---bus-pirate 
+--bus-pirate
 --by Thermos
---sine code 
- --by lumiette
+--sine code
+--by lumiette
 
- --game
- 
+--game
+
 in_progress = 0
 start_end_game = 1
 game_over = 255
@@ -15,304 +15,883 @@ start_next_level = 2
 next_level = 3
 init = 255
 level = 0
+
 pl_hacking = 0
 pl_menu = 1
 pl_submenu = 2
+pl_tweak = 3
+pl_wiring = 4
+pl_success = 255
+actor = {}
+blinker = false
+m = {}
 
- function sine(amplitude, speed, phase)
-   phase=phase or 1
-   return amplitude * (sin((t+phase/pi)*speed))
- end
 
- function draw_sine(spd,phs,tl,br,colour,thickness, border, bg)
- -- params: speed, phase, 
- --         top-left xy, bottom-right xy,
- --         wave colour, border colour, background colour 
+pls = {}
+pls[0]="pl_hacking"
+pls[1]="pl_menu"
+pls[2]="pl_submenu"
+pls[3]="pl_tweak"
+pls[4]="pl_wiring"
+pls[255]="pl_success"
+
+
+
+
+function make_actor(x, y)
+  a={}
+  a.x = x
+  a.y = y
+  a.dx = 0
+  a.dy = 0
+  a.spr = 16
+  a.frame = 0
+  a.t = 0
+  a.inertia = 0.6
+  a.bounce  = 1
+  a.frames=2
+  a.flag = 0
+
+  -- half-width and half-height
+  -- slightly less than 0.5 so
+  -- that will fit through 1-wide
+  -- holes.
+  a.w = 0.4
+  a.h = 0.4
+  add(actor,a)
+  return a
+end
+
+function _init()
+  memset(dmem,0x0,memchunk)
+  memset(tmem,0x0,memchunk)
+  state = init
+  plstate = pl_hacking
+  map_gen()
+  item_pos = {}
+  item_pos = item_gen()
+  t=0 pi=3.14159265359
+  tar = target_sine()
+  pl = make_actor(45,80)
+  pl.is_player = true
+  pl.spr = 0
+  pl.frames = 1
+  pl.freq = 0
+  pl.phase = 0
+  pl.connects = {}
+  pl.effect = {{13,0,1}}
+  mplay()
+  distorter()
+  sfx(1)
+  state = in_progress
+  level += 1
+  menu_idx = 1
+  mnu={roms,crystals,jumpers}
+  m = mnu[menu_idx]
+
+end
+
+function mplay()
+  if (level % 2 == 0) then
+    music(5)
+  elseif (level % 3 == 0) then
+    music(3)
+  else
+    music(1)
+  end
+end
+
+
+roms = {
+  x = 2,
+  label = "roms",
+  options={"shadow cross","checkers","w_c","slime shift","killface","elipsoid"},
+  sprites={41,42,43,57,58,59},
+  connects = {49,55},
+  flipped = {55},
+  amt = 4,
+  y = 8,
+  sel = 8,
+  freq_mod = 0,
+  phase_mod = 0,
+  chroma_mod = 0
+}
+
+crystals = {
+  x = 32,
+  label = "crystals",
+  options = {"red-plus", "green cross", "korn_Flower", "kiss-of"},
+  sprites = {44,45,46,60,61,62},
+  connects = {50},
+  flipped = {},
+  amt = 4,
+  y = 8,
+  sel = 8,
+  amp_mod = 0,
+  phase_mod = 0,
+  chroma_mod = 0,
+  chroma_mod = 0
+}
+
+jumpers = {
+  x = 64,
+  label = "jumper",
+  options = {"gators", "three way", "header v","header h"},
+  sprites = {11,15,10,38},
+  connects = {51,52,53,54},
+  flipped = {51,54},
+  amt = 4,
+  y = 8,
+  sel = 8,
+  freq_mod = 0,
+  phase_mod = 0,
+  chroma_mod = 0
+}
+
+
+
+--[[
+roms:
+crystals:
+jumpers:
+
+--]]
+
+function sine(amplitude, speed, phase)
+  phase=phase or 1
+  return amplitude * (sin((t+phase/pi)*speed))
+end
+
+
+function draw_sine(spd,phs,tl,br,colour,thickness, border, bg)
+  -- params: speed, phase,
+  --         top-left xy, bottom-right xy,
+  --         wave colour, border colour, background colour
   bg=bg or false  border=border or false  colour=colour or 7  thickness=thickness or 2
   tl=tl or {64-32,64-16} br=br or {64+32, 64+16}
   tx=tl[1] ty=tl[2] bx=br[1] by=br[2]
   x=bx-tx y=by-ty-1+thickness
 
   if border then
-   rectfill(tx,ty,bx,by+3,border) 
-   rectfill(tx+1,ty+1,bx-1,by+2,bg) end
-  for j=1,thickness do
-    for i=0,x-2 do
-     wave=sine(y/2,spd,phs+i)
-     pset(i+tx+1,ty+(y-1)/2-(j/2)+j+wave+1,colour)
+    rect(tx,ty,bx,by+3,border)
+    rectfill(tx,ty,bx,by+3,border)
+    rectfill(tx+1,ty+1,bx-1,by+2,bg) end
+    for j=1,thickness do
+      for i=0,x-2 do
+        wave=sine(y/2,spd,phs+i)
+        pset(i+tx+1,ty+(y-1)/2-(j/2)+j+wave+1,colour)
+      end
     end
-   end
- end
+  end
 
 
- function control_player(pl)
- -- how fast to accelerate
-	fr = 0.01
-	ph = 0.01
-	if (btn(0) and pl.freq >= 0) then pl.freq -= fr end
-	if (btn(1) and pl.freq <= .15) then pl.freq += fr end
-	if (btn(2) and pl.phase >= 0) then pl.phase -= ph end
-	if (btn(3) and pl.phase <= 0.7) then pl.phase += ph end
-	if (btn(4)) then 
-		plstate = pl_menu
-		init_menu()
-	end
+  function text_wave(txt)
+    for i=0,#txt do
+      tx=sine(12,80,i)+(6*i)-1.5*i
+      ty=110+sine(12,40,i*4)
+      print(sub(txt,i,i),tx+32,ty-20,7)
+    end
+  end
+
+
+function update_item(pl,action)
+  if check_me == true then
+    check_me = false
+    i = flr((pl.dx/8)+1)
+    j = flr((pl.dy/8)+1)
+    for f=0 , count(pl.connects) do
+      if pl.connects[f] == item_pos[i][j].flag then
+      if (btn(4) and plstate == pl_hacking) then
+        item_pos[i][j].spr = pl.spr
+      end
+        --print("this was true",pl.dx+10, pl.dy,7)
+      return true
+    else
+      if item_pos[i][j].x ~= nil or item_pos[i][j].y ~= nil or item_pos[i][j].spr ~= nil then
+
+      spr_effect(item_pos[i][j].flag,pl.dx-10, pl.dy,triple)
+      --spr_effect(item_pos[i][j].flag,pl.dx-10, pl.dy-10,smear)
+    end
+  end
+     end
+   
+      return false
+    end
+  end
+
+
+check_me = false
+insert = false
+
+function draw_update_items(pl)
+  update_item(pl)
+  check_me = true
+
 end
- 
--- menu
 
---updates the menu each frame
-  function lerp(startv,endv,per)
-  return(startv+per*(endv-startv))
- end
-  
+  function control_player(pl)
+    -- how fast to accelerate
+    if (btnp(5) and plstate == pl_hacking) then
+      move_actor(a)
+      plstate = pl_menu
+      init_menu()
+    if (btn(4) and plstate == pl_hacking and pl.dx <= 8 and pl.dy >= 114) then
+      move_actor(a)
+      plstate = pl_menu
+      init_menu()
+  end
+    elseif (btnp(5) and plstate == pl_menu) then
+      move_actor(a)
+      plstate = pl_hacking
+    elseif plstate == pl_tweak then
+      fr = 0.01
+      ph = 0.01
+      if (btn(0) and pl.freq >= 0) then pl.freq -= fr end
+      if (btn(1) and pl.freq <= .16) then pl.freq += fr end
+      if (btn(3) and pl.phase >= 0) then pl.phase -= ph end
+      if (btn(2) and pl.phase <= 0.8) then pl.phase += ph end
+      if (btnp(4)) then
+        plstate = pl_menu
+        init_menu()
+      end
+    end
+  end
+
+  -- menu
+
   --updates the menu each frame
- function update_menu()
-  update_cursor()
-  if btnp(4) then
-   if m.options[m.sel]=="start" then
-    plstate=2
-   end
+  function lerp(startv,endv,per)
+    return(startv+per*(endv-startv))
   end
-  if btnp(5) then
-    plstate=pl_hacking
+
+  --updates the menu each frame
+  function update_menu()
+    if plstate == pl_menu then
+      update_cursor()
+      if btnp(5) and plstate == pl_menu then
+        --update_cursor()
+        plstate=pl_hacking
+      end
+    end
   end
-  end 
- 
+
   --displays the different options
- --and which one is selected
- function draw_menu()
-  --rectfill(m.x-8,m.y-8,m.x+32,m.y+40,3)
-  rectfill(m.x-8,m.y,m.x+16,m.y,3)
-  draw_options()
-  
-  print("paused",m.x,m.y-4,col1)
-  line(m.x,m.y+2,m.x+22,m.y+2,col1)
- end
- 
-  --creates menu variables
- function init_menu()
-  state=0
-  m={}
-  m.x=2
-  --m.y=40
-  m.options={"start","settings","exit"}
-  m.sprites={1,3,5,7,1,3}
-  m.amt=count(m.sprites)
-  m.y = (80 - (m.amt*16))
-  m.sel=8
-  cx=m.x
-  col1=7
-  col2=3
- end
- 
+  --and which one is selected
+  function draw_menu()
+    --rectfill(m.x-8,m.y-8,m.x+32,m.y+40,3)
+    rectfill(m.x-8,m.y,m.x+16,m.y,3)
+    draw_options()
+
+    print(m.lablel,m.x,m.y-4,col1)
+    line(m.x,m.y+2,m.x+22,m.y+2,col1)
+  end
+
+  function init_menu()
+    m = mnu[menu_idx]
+    state=0
+    cx=m.x
+    m.amt=count(m.sprites)
+    col1=6
+    col2=3
+  end
+
+  --creates menu v
+
+
   function draw_options()
-  for i=1, m.amt do
-   offset=i*16
-   if i==m.sel then
-    rectfill(cx,m.y+offset-1,cx-36,m.y+offset+5,col1)
-    --print(m.options[i],cx+1,m.y+offset,col2)
-	spr(m.sprites[i],cx,m.y+offset,2,2)
-   else
-    --print(m.options[i],m.x,m.y+offset,col1xx)
-	spr(m.sprites[i],m.x,m.y+offset,2,2)
-   end
+    for i=1, m.amt do
+      offset=i*12
+      if i ~=m.sel then
+        rect(cx,99-offset,cx+26,99-offset+11,col1)
+        spr(m.sprites[i],cx+10,99-offset+2,1,1)
+        spr_effect(m.sprites[i],cx+10,99-offset+2,basic_bl)
+      else
+        --print(m.options[i],m.x,m.y+offset,col1xx)
+        --print(m.sprites[i][s],50,99-offset)
+        fillp(0B101101001011010.1)
+        rectfill(cx,99-offset,cx+26,100-offset+10,14)
+        fillp()
+        rect(cx,99-offset,cx+26,99-offset+11,col1)
+        --print(m.options[i],cx+13,99-offset+5,col2)
+
+        --print(m.sprites[i][s],50,50+offset)
+        spr_effect(m.sprites[i],cx+10,99-offset+3,basic)
+        --spr(m.sprites[i],cx+10,99-offset+3,1,1)
+        pl.dx = cx+2
+        pl.dy = 99-offset+4
+
+      end
+    end
   end
- end
- 
+
   function update_cursor()
-  if (btnp(2)) m.sel-=1 cx=m.x
-  if (btnp(3)) m.sel+=1 cx=m.x
-  if (btnp(4)) cx=m.x
-  if (m.sel>m.amt) m.sel=1
-  if (m.sel<=0) m.sel=m.amt
-  
-  cx=lerp(cx,m.x+5,0.5)
- end
+    if plstate == pl_menu then
+      pl.p_spr = pl.spr -- save the last set sprite
+      if (btnp(2)) then m.sel+=1 cx=m.x end
+      if (btnp(3)) then m.sel-=1 cx=m.x end
 
- function draw_menu()
-  rectfill(m.x-8,m.y-8,m.x+32,m.y+40,3)
-  draw_options()
-  print("paused",m.x,m.y-4,col1)
-  line(m.x,m.y+2,m.x+22,m.y+2,col1)
- end
--- end menu
- 
- function target_sine()
-	tar = {}
-	tar.freq = (flr(rnd(15)) * 0.01)
-	tar.phase = (flr(rnd(7)) * 0.01)
-	tar.back = rnd(15) 
-	tar.fore = tar.back - 1
-	return tar
- end
- 
- function distorter()
-    if (state == init) then
-	   local addr=flr(rnd(0x0004))+0x5f40
-       local value=flr(rnd(16))
-       poke(addr,value)
-	end
-	if (state == start_end_game or state == start_next_level) then
-		for i=0x5f40,0x5f43,1 do
-			poke(i,0)
-		end
-   end
-	if (pl.freq == tar.freq) then
-		poke(0x5f40,0)
-	end
-	if (pl.phase == tar.phase) then
-		poke(0x5f44,0)
-	end
-	if (state == in_progress) then
-		local addr=flr(rnd(0x0004))+0x5f40
-		local value=flr(rnd(16))
-		poke(addr,value)
-	end
-end
- 
- 
- function _init()
-   state = init
-   plstate = pl_hacking
-   t=0 pi=3.14159265359
-   tar = target_sine()
-   pl = {}
-   pl.freq = 0
-   pl.phase = 0   
-   music(1)
-   distorter()
-   sleep_t = 0
-   state = in_progress
-   level += 1
- end
-
- function _update60()
-   t+=0.5
-   distorter()
-   if plstate == pl_menu then
-	update_menu()
-   else
-	control_player(pl)
-   end
-   if(pl.freq == tar.freq and pl.phase == tar.phase and state == in_progress) then
-   sfx(0)
-	state = start_next_level
-   end
-   if (state == next_level) then
-	
-   end
- end
- 
- 
- function player_ctrl()
-	draw_sine(pl.freq, t*pl.phase, {1,20}, {127,36}, 7, nil, nil, 3)
- end
- 
- function target_wave()
-	draw_sine(tar.freq, t*tar.phase, {1,18}, {127,36}, tar.fore, 3, 7, tar.back)
- end
- 
- function _draw()
-  cls()
-if state == in_progress then
-	map()
-	spr(1,1,90,2,2)
-	spr(3,32,90,2,2)
-	spr(5,64,90,2,2)
-	spr(7,96,90,2,2)
-	draw_sine(pl.phase, t/4, {97,105}, {97+22,115}, 10, 1, nil, nil)
-	draw_sine(pl.freq, t/4, {97,106}, {97+22,116}, 11, 1, nil, nil)
-	print ("draw_sine(freq, phase, xy1, xy2,",2,44,7)
-	print ("[wave colour, thickness,",22,50,6)
-	print ("colour, colour]) plstate ".. plstate,22,56,5)
-	target_wave()
-	player_ctrl()
-	print ("LEVEL:"..level,1,1,14)
-	print ("freq: ".. pl.freq,2,74,14)
-	print ("freq: ".. tar.freq,60,74,14)
-	print ("phase: ".. pl.phase,2,112,14)
-	print ("phase: ".. tar.phase,60,112,14)
-	if plstate == pl_menu then
-		draw_menu()
-	end
-elseif state == start_next_level then
-	print("\133 signal lock \133",62,44,7)
-	state = next_level
-elseif state == next_level then
-	cls()
-	draw_sine(pl.freq, t*tar.phase, {1,128}, {127,36}, 1, nil, 0, 0)
-	print("\135 NEXT Mission \135",62,44,7)
-		_init()
-		state = in_progress
-  elseif state == game_over then
-	cls()
-	draw_sine(pl.freq, t*tar.phase, {1,128}, {127,36}, 1, nil, 0, 0)
-	print("\135 game over \135",62,44,7)
-	if btn(5) then
-		level = 0
-		_init()
-	end
+      if (btnp(1) and menu_idx < count(mnu)) then
+        menu_idx+=1
+        init_menu()
+      end
+      if (btnp(0) and (menu_idx - 1) > 0) then
+        menu_idx-=1
+        init_menu()
+      end
+      if (btnp(4)) then
+        cx=m.x
+        pl.spr = m.sprites[m.sel]
+        pl.connects = m.connects
+        pl.flag = m.flag
+        plstate=pl_hacking
+      end
+      if (btnp(5)) then
+        cx=m.x
+        plstate=pl_hacking
+      end
+      if (m.sel>m.amt) then m.sel=1 end
+      if (m.sel<=0) then m.sel=m.amt end
+    end
+    cx=lerp(cx,m.x+5,0.5)
   end
-  --print ("  it helps you, somehow!",12,80,14)
-  --print ("(maybe as a quick 'n dirty",12,92,2)
-  --print ("visual effect)",34,98,2)
- end
+
+  function draw_menu()
+    fillp(0B101101001011010.1)
+    rectfill(m.x+1,99-(m.amt*13),m.x+32,m.y+99,1)
+    fillp()
+    rectfill(m.x+3,100-(m.amt*13)-4,m.x+32,m.y+98,5)
+    rect(m.x+3,100-(m.amt*13)-4,m.x+32,m.y+98,6)
+    draw_options()
+    half = #m.label / 3
+    print(m.label,m.x+half+1,m.y+99,col1)
+    --line(m.x,m.y+2,m.x+22,m.y+2,col1)
+    --tx=m.x+(#m.label/2*4-1)+half
+    tx = m.x+half+3
+    ty=m.y+99
+    str_effect(m.label,tx,ty,basic)
+  end
+  -- end menu
+
+  function target_sine()
+    tar = {}
+    tar.freq = (flr(rnd(16)) * 0.01)
+    tar.phase = (flr(rnd(8)) * 0.01)
+    tar.back = 1
+    tar.fore = (flr(rnd(16),1))
+    return tar
+  end
+
+  function distorter()
+    if (state == init) then
+      local addr=flr(rnd(0x0004))+0x5f40
+      local value=flr(rnd(16))
+      poke(addr,value)
+    end
+    if (state == start_end_game or state == start_next_level) then
+      music(-1)
+      for i=0x5f40,0x5f43,1 do
+        poke(i,0)
+      end
+    end
+    if (pl.freq == tar.freq) then
+      poke(0x5f40,0)
+      poke(0x5f42,0)
+    end
+    if (pl.phase == tar.phase) then
+      poke(0x5f41,0)
+      poke(0x5f43,0)
+    end
+    if (state == in_progress) then
+      --local addr=flr(rnd(0x0004))+0x5f40
+      --local value=flr(rnd(16))
+      --poke(addr,value)
+    end
+  end
+
+  function move_actor(a)
+    -- only move actor along x
+    -- if the resulting position
+    -- will not overlap with a wall
+    if a.is_player then
+      if btn(0) then
+        if a.dx > 0 then
+          a.dx -= 1
+        end
+      elseif btn(1) then
+        if a.dx <= 127 then
+          a.dx += 1
+        end
+      elseif btn(2) then
+        if a.dy >= 40 then
+          a.dy -= 1
+        end
+      elseif btn(3) then
+        if a.dy <= 109 then
+          a.dy += 1
+        end
+      else
+        if (a.dx >= 0 or a.dx <= 127) then
+          a.x += a.dx
+        end
+        if (a.dy >= 40 or a.dy <= 109) then
+          a.y += a.dy
+        end
+        draw_actor(a)
+      end
+    end
+  end
+
+
+  bt = 0
+  u_timer = 0
+
+  function draw_actor(a)
+    --print("Sprite: "..a.spr,a.dx,a.dy)
+  if a["effect"] ~= nil then
+    spr_effect(a.spr,a.dx,a.dy,a.effect)
+  else
+    spr(a.spr,a.dx,a.dy)
+  end
+
+  end
+
+
+  function map_gen()
+    for i=0,16 do
+      for j=0,16 do
+        if i+j % 2 == 1 then
+          mset(j,i, 160)
+        elseif i % 3 == 1 then
+          mset(j,i,flr(rnd(128) + 128),2)
+        elseif i % 2 == 0 then
+          mset(j,i, 175)
+        else
+          mset(j,i,flr(rnd(128) + 128),2)
+        end
+      end
+    end
+  end
+
+
+  function item_gen()
+    --item_pos = {}
+    for i=0,16 do
+      item_pos[i]= {}
+      for j=0,16 do
+        item_pos[i][j] = {}
+        if j <= 6 then
+          item_pos[i][j].spr = 56
+        elseif i <= 2 then
+          item_pos[i][j].spr = 56
+        elseif i+j % 2 == 0 then
+          item_pos[i][j].spr = flr(rnd(7)) +48
+        elseif i % 3 == 0 then
+          item_pos[i][j].spr = flr(rnd(6)) +48
+        elseif i % 2 == 1 then
+          item_pos[i][j].spr= flr(rnd(4)) +48
+        else
+          item_pos[i][j].spr= 56
+          end
+        item_pos[i][j].flag = item_pos[i][j].spr
+        item_pos[i][j].y = (j-1)*8
+        item_pos[i][j].x = (i-1)*8
+        end
+      end
+      return item_pos
+    end
+
+  function draw_items()
+    -- body
+    for i=0, count(item_pos) do
+      for j=0, count(item_pos[i]) do
+        item = item_pos[i][j]
+        spr(item.spr,item.x,item.y)
+    end
+end
+
+  end
+
+  function _update60()
+    t+=0.5
+    bt = (bt + 1) % 8
+    blinker = (t == 0)
+    update_menu()
+    control_player(pl)
+    foreach(actor,move_actor)
+    foreach(actor,draw_actor)
+    player_ctrl_p()
+    if state == in_progress then
+      draw_update_items(pl)
+    end
+    if(pl.freq == tar.freq and pl.phase == tar.phase and state == in_progress) then
+      music(-1,300)
+      music(2)
+      plstate = pl_success
+      if u_timer <= 60 then
+        player_ctrl_p()
+        u_timer += .5
+      else
+        u_timer = 0
+        flip()
+        state = start_next_level
+      end
+    end
+    if state == start_next_level then
+      music(-1)
+      distorter()
+      music(3)
+    end
+    if (state == next_level) then
+    end
+  end
+
+
+  function anim(o,sf,nf,sp,fl)
+    if(not o.a_ct) o.a_ct=0
+    if(not o.a_st) o.a_st=0
+
+    o.a_ct+=1
+
+    if(o.a_ct%(30/sp)==0) then
+      o.a_st+=1
+      if(o.a_st==nf) o.a_st=0
+    end
+
+    o.a_fr=sf+o.a_st
+    spr(o.a_fr,o.x,o.y,1,1,fl)
+  end
+
+  function player_ctrl_p()
+    if pl.freq == tar.freq then
+      fillp()
+      freq = 11
+    else
+      freq = 7
+    end
+    ww = 1
+    if pl.phase == tar.phase then
+      ww = 2
+      fillp()
+      draw_sine(pl.phase, t/4, {97,2}, {126,14}, 4, 1, 3, 8)
+    end
+    draw_sine(pl.freq, t*pl.phase, {2,20}, {126,36}, freq, ww, nil, 8)
+    fillp()
+    -- control panel
+    if plstate == pl_success then
+      distorter()
+      str="SigNaL LocK"
+      if blinker then
+        pal(4,8)
+      end
+      tx=63-(#str/2*4-1)  ty+=8
+      str_effect(str,tx,ty,bevel)
+    end
+  end
+
+  function target_wave()
+    if tar.fore == 4 then
+      wave_color = tar.fore +1
+    else
+      wave_color = tar.fore
+    end
+    draw_sine(tar.freq, t*tar.phase, {2,20}, {126,36}, wave_color, 2, 6, 4)
+  end
+
+
+
+  function _draw()
+    cls()
+
+    fillp(0B1000001000000)
+    rectfill(0,40,128,nil,5)
+    fillp()
+    if state == in_progress then
+      --control_player(pl)
+      map(0, 0, 0, 40, 16, 160)
+      draw_items()
+
+      
+
+      fillp(0B1010010110100000.1)
+      rectfill(97,2, 125,8,9)
+      fillp()
+      fillp(0B101101001011010.1)
+      rectfill(97,14, 125,14,9)
+      fillp()
+
+      lv = "LEvEL:"..level
+      tx=18-(#lv/2*4-1)  ty=2
+      str_effect(lv,tx,ty,basic)
+
+      --print("x "..pl.x,0,70,7)
+      --print("y "..pl.y,64,70,7)
+      --print("plstate "..pls[plstate],64,80,7)
+      fillp(0B1000001000000)
+      rectfill(0,110,128,128,5)
+      fillp()
+      rectfill(2,111,126,127,4)
+      spr(77,8,114,2,2)
+      spr(109,40,114,2,2)
+      spr(84,74,111,1,2)
+      spr(7,104,114,2,2)
+      rect(2,111,126,127,7)
+      rectfill(97,2, 125,17,4) -- phase screen
+      line(0,40,128,40,7)      -- top box
+      line(0,110,128,110,7) --start of menu 70 height
+      target_wave()
+      player_ctrl_p()
+      foreach(actor,draw_actor)
+      --place_item(pl)
+      draw_update_items(pl)
+      if plstate == pl_menu then
+        draw_menu()
+      end
+      fillp()
+      rect(97,2, 126,17,7)
+      
+
+    elseif state == start_next_level then
+      state = next_level
+    elseif state == next_level then
+      cls()
+      draw_sine(pl.freq, t*tar.phase, {1,128}, {127,36}, ran, nil, 0, 0)
+      print("\135 NexT mISSIOn \135",62,44,7)
+      if btn(5) then
+        _init()
+        state = in_progress
+      end
+    elseif state == game_over then
+      cls()
+      draw_sine(pl.freq, t*tar.phase, {1,128}, {127,36}, 1, nil, 0, 0)
+      print("\135 game over \135",62,44,7)
+      if btn(5) then
+        level = 0
+        _init()
+      end
+    end
+    --print ("  "..count(mnu),2,20,14)
+    --print ("menu_idx "..menu_idx,12,92,2)
+    --print ("visual effect)",34,98,2)
+  end
+
+
+
+  vmem=0x6000 --video memory
+  dmem=0x4300 --data memory
+  tmem=0x5000 --temp memory
+  smem=0x0000 --sprite memory
+  memchunk=64*6
+
+  function str_cache(str)
+    memset(dmem,0x0,memchunk)
+    memset(tmem,0x0,memchunk)
+
+    --steal the screen for a memcpy
+    memcpy(tmem,vmem,memchunk)
+    memset(vmem,0x0,memchunk)
+    print(str,0,0,1)
+    memcpy(dmem,vmem,memchunk-64)
+    memcpy(vmem,tmem,memchunk)
+    memset(tmem,0x0,memchunk)
+  end
+
+  function apply_effects(effects, memstart, xmemoffset, ymemoffset, length, height, dx, dy)
+    for e in all(effects) do
+
+      fill         = e[1]                                --standard fill color
+      stroke = e[2] or fill--outline color
+      width     = e[3] or 0            --how thick should the outline be
+      ex     = dx+(e[4] or 0) --+x offset for the outline effect
+      ey     = dy+(e[5] or 0) --+y offset for the outline effect
+
+      for y=0,height do
+        ymem=(ymemoffset+y)*64
+        y1=ey+y-width
+        y2=ey+y+width
+
+        --each pix pair needs only 1 rect:
+        --left pix, right, or both
+        for x=0,length do
+          x1=ex+(x*2)+1-width
+          x2=ex+(x*2)+width
+
+          byte=peek(memstart+ymem+xmemoffset+x)
+          if byte > 0 then
+            if (band(byte,0xf) > 0) x1-=1     --left pix
+            if (band(byte,0xf0) > 0) x2+=1 --right pix
+            rectfill(x1,y1,x2,y2,stroke)
+          end
+        end
+
+      end
+    end
+  end
+
+
+  function str_effect(str,dx,dy,effects)
+    str_cache(str)
+    apply_effects(effects, dmem, 0, 0, #str*2, 5, dx, dy)
+    print(str,dx,dy,fill)
+    memset(dmem,0x0,64*5)
+  end
+
+  function spr_effect(id,dx,dy,effects)
+    apply_effects(effects,
+    smem,
+    (id%16)*4,
+    (flr(id/16)*8),
+    3, 7,
+    dx, dy)
+    spr(id,dx,dy)
+  end
+
+
+  basic        =    {{4,7,1}}
+  basic_bl        =    {{4,0,1}}
+  triple = {{8,8,3},{0,10,2},{1,12,1}}
+  bevel     = {{10,10,2},{4,4,2,1,1},{7,9,1}}
+  bevel2     = {{10,10,2},{4,4,2,1,1},{9,7,1}}
+  shadow    =    {{0,13,0,1,1}}
+  smear        =    {{15,15,1,-3,0},{14,14,1,-2,0},{7,8,1,-1,0}}
+  idx=1
+  offsets={{1,1},{0,1},{-1,1},{-1,0},{-1,-1},{0,-1},{1,-1},{1,0}}
+
+
+
+
+
 __gfx__
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-000000000000011115d600000000011115d600000000011115d600000000011115d6000000000000000000000000000000000000000000000000000000000000
-000000000009a111111d9a000009a111111d9a000009a111111d9a000009a111111d9a0000000000000000000000000000000000000000000000000000000000
-00000000000001111115000000000111111500000000011111150000000001111115000000000000000000000000000000000000000000000000000000000000
-000000000009a11111119a000009a11111119a000009a11111119a000009a11111119a0000000000000000000000000000000000000000000000000000000000
-00000000000001111111000000000111111100000000011111110000000001111111000000000000000000000000000000000000000000000000000000000000
-000000000009a11111119a000009a11111119a000009a11111119a000009a11111119a0000000000000000000000000000000000000000000000000000000000
-00000000000001118111000000000111311100000000011c3c110000000001177711000000000000000000000000000000000000000000000000000000000000
-000000000009a11828119a000009a11323119a000009a113c3119a000009a11575119a0000000000000000000000000000000000000000000000000000000000
-00000000000001118111000000000111311100000000011c3c110000000001175711000000000000000000000000000000000000000000000000000000000000
-000000000009a11111119a000009a11111119a000009a11111119a000009a11171119a0000000000000000000000000000000000000000000000000000000000
-00000000000001111111000000000111111100000000011111110000000001111111000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-67777777777777777777777777777777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-66666666666666666666666666666666000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-6dddddddddddddddddddddddddddddd6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-67777777777777777777777777777776000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-66666666666666666666666666666666000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0070000005655650009009009a790000100000000011115d600000000011115d6000000011100000111000000600000060600000060000006060000000900000
+07d70000a5555559066666600000000019a000009a111111d9a000009a111111d9a000001f1000001a1000005d500000d0d000005d500000d0d0000005a50000
+7d8d700005655650a60660690000000060000000001111115000000000111111500000001110000011100000565000005650000056500000565000000b580000
+07d70000a55555590660066000000000d9a000009a11111119a000009a11111119a000001f1000001a10000088e0000088e00000aa700000aa70000030002000
+007000000565565006600660000000005000000000111111100000000011111110000000111000001110000028800000288000009aa000009aa0000000000000
+00000000a5555559a60660690000000019a000009a11111119a000009a11111119a0000000000000000000000400000004000000040000000400000000000000
+00000000056556500666666000000000100000000011c3c1100000000011777110000000000000000000000008000000080000000a0000000a00000000000000
+000000000000000000a00a000000000019a000009a113c3119a000009a11575119a0000000000000000000000200000002000000090000000900000000000000
+00000000111000009000000011111000100000000011c3c110000000001175711000000000500000000000000600000060600000060000006060000000000000
+0000000019100000700000001919100019a000009a11111119a000009a11171119a0000000d00000060005005d500000d0d000005d500000d0d0000000000000
+0000000011100000a000000011111000100000000011111110000000001111111000000005650000050006005650000056500000565000005650000000000000
+00000000191000009000000000000000000000000000000000000000000000000000000005d500000d505500cc700000cc700000bba00000bba0000000000000
+00000000111000000000000000000000000000000000000000000000000000000000000005650000005650001cc000001cc000003bb000003bb0000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000005d50000005d50000500000005000000050000000500000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0000000c0000000b0000000b00000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000001000000030000000300000000000000
+00000000000000000000000000000000000000000000000011111000111110000000000001111560011115600111156000a00a0000a00a0000a00a0000000000
+0000000000000000000000000000000000000000000000001f1f10001a1a1000000000009111115a9111115a91d6115a05555670055556700555567000000000
+0000000000000000000000000000000000000000000000001111100011111000000000000111111001111110011d11109585556a9555556a9555556a00000000
+0000000000000000000000000000000000000000000000000000000000000000000000009118e11a9115711a91d1d61a05d85550053b35500511115000000000
+00000000000000000000000000000000000000000000000000000000000000000000000001888e100117511001511d1005cd855005b3b3500551515000000000
+0000000000000000000000000000000000000000000000000000000000000000000000009118e11a9115711a9111d11a951cd85a953b355a9551515a00000000
+00000000000000000000000000000000000000000000000000000000000000000000000001111110011111100111511005555550055555500555555000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000900900009009000090090000000000
+00000000056556500090090005f00f505550000000500000555550000a0a0a000000000001111560011115600111156000a00a0000a00a0000a00a0000000000
+00000000a555555a066666605f9a79f55950000005f500005959500055555550000000009111115a9111115aa111115905555670055556700555567000000000
+0000000005655650a606606905f00f50555000000f9f0000555550006565656000000000011111100117711001122110955c556a95dd556a9552256a00000000
+00000000a555555a06600660000000005950000000700000000000005555555000000000911b711a917d571aa121121905ccc55005dee5500555255000000000
+000000000565565006600660000000005550000000a0000000000000656565600000000001b3ba100117711001122110055c5c50055e11500552555000000000
+00000000a555555aa606606900000000000000000f9f0000000000005555555000000000913b3b1a9116d11aa1111119955c5c5a9555115a9552255a00000000
+000000000565565006666660000000000000000005f50000000000000a0a0a000000000001111110011111100111111005555550055555500555555000000000
+000000000000000000a00a0000000000000000000050000000000000000000000000000000000000000000000000000000900900009009000090090000000000
+000000000000000000000000000000000009aa000f0a770f000000000011115d600000000011115d100000000011115d600000000011115d6000000000000000
+0000000000000000000000000000000000999fa000aaa970000000009a111111d9a000009a11111119a000009a111111d9a000009a111111d9a0000000000000
+00000000000000000000000000000000099999fa0aaaaa9700000000001111115000000000111111600000000011111150000000001111115000000000000000
+000000000000000000000000000000000999999a0aaaaaa7000000009a11111119a000009a111111d9a000009a11111119a000009a11111119a0000000000000
+000000000000000000000000000000000499999909aaaaaa00000000001111111000000000111111500000000011111110000000001111111000000000000000
+0000000000000000000000000000000000499990009aaaa0000000009a11111119a000009a11111119a000009a11111119a000009a11111119a0000000000000
+00000000000000000000000000000000000449000f099a0f00000000001118111000000000111311100000000011c3c110000000001177711000000000000000
+000000000000000000000000000000000000000000000000000000009a11828119a000009a11323119a000009a113c3119a000009a11575119a0000000000000
+00000000000000000000000000000000000000000000000000000000001118111000000000111311100000000011c3c110000000001175711000000000000000
+000000000000000000000000000000000000000000000000000000009a11111119a000009a11111119a000009a11111119a000009a11171119a0000000000000
+00000000000000000000000000000000005000000000000000000000001111111000000000111111100000000011111110000000001111111000000000000000
+0000000000000000000000000000000000d000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000056500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000005d500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000056500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000005d500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000008888e000bbbb60000050000000a0000a0000000000a0000a0000000000a0000a0000000000a0000a0000000000000000
+0000000000000000000000000000000088888000bbbbb00000d00000055555d670000000055555d670000000055555d670000000055555d67000000000000000
+0000000000000000000000000000000088888000bbbbb00005650000955555556900000095555555690000009555555569000000955555556900000000000000
+000000000000000000000000000000002488800035bbb00005d500000555b355d0000000055ccc55d000000005552555d0000000055dd555d000000000000000
+000000000000000000000000000000000288000003bb000005650000055333355000000005555c55500000000555525550000000055dee555000000000000000
+00000000000000000000000000000000088800000bbb000005d500000d553b55500000000d55c555500000000d552555500000000d55e1155000000000000000
+0000000000000000000000000000000000400000005000000000000005655555500000000565c555500000000565525550000000056551155000000000000000
+00000000000000000000000000000000002000000030000000000000955755555900000095575555590000009557555559000000955755555900000000000000
+00000000000000000000000000000000cccc6000aaaa7000000000000555d555500000000555d555500000000555d555500000000555d5555000000000000000
+00000000000000000000000000000000ccccc000aaaaa00006000500009000090000000000900009000000000090000900000000009000090000000000000000
+00000000000000000000000000000000ccccc000aaaaa00005000600000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000015ccc00094aaa0000d505500000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000001cc000009aa000000565000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000ccc00000aaa0000005d5000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000005000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000001000000090000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+33333333333533ff55555333333333333333335333335533ff555555555533633333333333333333333333333333333333333333333333333333333333333333
+33333333335333ff55553553333333333333333535555333ff355555553335333333333333333333333333333333333333333333333333333333333333ffff33
+33333333353333ff55555333333333333333333333333333ff3333333333533333333333333333333ff55ff35ff3ff53ff55ff3333333333333333333ff33ff3
+35ff5333353333553333333333333333333333333333333355333555555533353333333355555555ff3ff555f3f3f3f555ff3ff553333333333333333f3333f3
+3fff5333353333ff35555333333333333333333333333333ff5533333333335533333335333333333ff55ff5fff3fff5ff5fff3335333333333333333f3333f3
+35ff533335333355333335333333333333333333333333335533355555555533333333533333333333333f33553333333533333333533333333333333ff53ff3
+33333333353333ff33333353353333333333333333333333ff555333333333333333353355555555555563333333333335333333333533333333333333ffff33
+33333333353533553333333333333333333333555555553355333333355555553333553533333333333333353333333335555555333353333333333333333333
+33ff5333535333ff33333333333333533333333333333333ff333333533333333333355533333555336665533333333333333333553353333333333333333333
+35fff555355333353333333533333335333333333353333353333335333333333333355333335533355335333533353335335333333353333333333333333333
+33ff3333553355ff33333353333f33335333333333633333ff3333533333333333333353333553333fff5ff5fff3fff3ff5fff33335353333333333333333333
+33333333533f333533333353333353335533333333533333353335333555555533333353335533335f3ff55ff3f3f3ff55ff3f53335353333333333333333333
+3333333333f333ff33333533333335333533333335533333ff55533f3333333333335353355333333ff53ff35ff3ff53ff35ff33335363333333333333333333
+33333335353333553333353333333533353333335533333355333363333333333335355355333333335333333533333333335333335333333333333333333333
+33553355353356ff33333533333335333533333353333333fff5663333333333335353355333333335333f335533333333335333355333333333333333333333
+35ff5353353553533333333333333533553333335333333355333333333333333335533533333333533353355333333333335333333333333333333333333333
+35fff533353533333f5f5f5f5f5f5ffffff5f5f5f5f3f5f533333333333333335355355355335563333533553333333333355333333333333333333333333333
+33553333355533333f5f5f5f5f5f5ffffff5f5f5f5f5f5f533333333333333333533353533333333335333533333333555533333333333333333333333333333
+333333333333333336363335333533553333335333f3533333333333333333333533353333333333335333533333335333333333333333333333333333333333
+33333333333f33333635333533553355333333533353353333333333333333333533355333333333335333533333353333333333333333333333333333333333
+35ff5333333535566335333535533335333335333353355333333333333333333533355333333333335333f33333533333335555555555533333333333333333
+5fff53333333353333333333553333333333553333333355333333333333333335333553333333333333333333353333333f3333333333353333333333333333
+33ff33333333633333333333533333333333533333333335333333333365555f3533355333333333333333333353333333533333333333335333333333333333
+333333333335f63335533335f53355533335f3335533333ff333553335333335353335533333333333333333335333333533333333333335f533355333333333
+33333333333fff33fff3333fff33fff3333ff533fff3335ff533ff5353333555353335533333333333fff3333fff3333fff5333333333335ff333fff55333333
+33333333333fff33fff3333fff33fff3333ff533fff3335ff533fff53333f33335333553333335355ffff3333fff3333fff5333333333335ff333ff333333333
+33333333333333333f33333333333533333333333f33333333333333333633333533355333335533335553333555333355f33333333333333333333333333333
+3333333333333333353333333333353333333333333333333333333333f3355f5533355333353333333333333333333333333333333333333333333333333333
+3333333333333333553333333333333333333333353333333333333333336333353335533335333333333333333333333333333333333335ff333ff333333333
+335555555555555353333333333333333333333333f5333333333333333f333355333553333533333333333333333333333333333355555fff333fff35533333
+3533333333333333333333333333333353333333333533333333333333633333553335533335333335fff3333fff5333fff5333333333335ff333ff333333333
+5333333333333333333333333333333335333333333355333333333333333335353335533335333335fff3333fff5333fff53333633333333333333333333333
+333333333333333333333333333333333553333333333555555555555555555535333553333533333335333333f3333333333333333333333333333333333333
+33333555ffff333333335fff55533333335f55555555555555555555533333333533355333353333333333333353333333333333333333333333333333333333
+33333333fff5333333335fff33353333333333333333333333333333333333333533353333353333333333333333333333333333333333333333333333333333
+353333333333333333333333333353333333333333333333333333333355555f3533353333353333333333333353333333333333333333333333333333333355
+55335555ffff333333335fff55533533333333333333333333333333333333333533355333353333333333333333333333335633333533333353333353333353
+333f3333fff5333333335fff33353353333333333333333333333333333335553533355333353333333333333333333533335633333f533335f33335f5333553
+33333333353333333333535533355333333333333333333333333333333353333533355333353333333333333333335333333633333533333353333353333305
+353333f5ffff33333333ffff33335333333333333333333333333333333533333533355333353333333333333333355333333633333533333353333353333353
+f333333355553333333355553333335333333333333333333333333333353333353335533335333355333333333333333336fff333ffff33ffff335fff533353
+3333333355553333333355553333333333333333333333333333333333353333353353f33355333533333333333333333336fff333ffff33ffff335fff533555
+33335355ffff333333335fff5555555553333355555555333355333333353333353355333553335333333333333333333336fff333ffff33ffff335fff533333
+3335333355533333333335553333333333333333333333333333533333353333355553335533353333333333333333333335fff333fff5335fff333fff333533
+33533333fff5333333335fff3333333333333333333333333333353333353333355353335333533333333333533f333533333333333333333333333333333555
+35333555ffff333333335fff555555555555555553555555555333533335333355555333f333f333333333365353333533333333333333333333333333333535
+5333533333333333333333333333333333333333333333333335333533353333fff5f5f5f5f5f5f5333333653533353333355553335555335555333555333333
+33353333fff5333333335fff3333333333333333333333333333533353335333fff5f5f5f3f3f5f333333653533353333335fff333ffff33ffff335fff533333
+335335553333333333333333333333333333333333333333333335333533553333333333333333333333653533355333333ffff333ffff33ffff335fff533333
+35335533333333333333333333333333333333333333333333333f335f3355333333333533333333ff6653533355333533f5fff333ffff33ffff335fff533333
+5535533333333333333333333333333333333333333333333333f6f3ffffff3f3333333533333333553353333533335535333333333333333353333333333333
+3353333333333333333333333333333333333355333333333333f5f5f5ffff5f3333333553333333ff6553335533355335333333333533333353333353333333
+33333333333356333335333333533333533333535555555553333f535f33f5333333333553333333553333355333533335333333333333333353333353333333
+3333333333335633333f533335f33335f53335533333333336335ff3ff55ff3f3333333333333333fff555553335533535333333333533333353333335333333
+3333333333333633333533333353333353333305333333333566f3f6f3ff355f3333333333333333553333333355353335555355333533333353333333555555
+33333333333336333335333333533333533333533333333333336ff3ff55ff3f33333333333f5555ff33333335535333335ff3ff353533333353333333333333
+333333333336fff333ffff33ffff335fff5333533333333333333f335f33f53533333333333333335533333355335333333f535f353533333353333333333333
+333333333336fff333ffff33ffff335fff533555333333333333f5f5f3ffff5f3333333335333333ff55555533533f5533333333333533333353333333333333
+333333333336fff333ffff33ffff335fff533333555555555556fff3fff5ff5f3333333533333333553333333533f333333f535f335333333353333333333333
+333333333335fff333fff5335fff333fff3335333333333333333533353355333333333333333333ff55555553353333335ff3ff553333333353333333333333
+333333333333333333333333333333333333355533333333333333333333333333333333333333335533555553533335333f535f333333333353333333333333
+33333333333333333333333333333333333335353333333333333333333333333333333333333333ff5555555533335333333333333333333335333333333333
+33333333333555533355553355553335553333333333333333333333333333333333333333333335ff33333333333533353ff3ff533333333333f33333333333
+333333333335fff333ffff33ffff335fff5333333333333333333333333333333333333333333555ff33333333335333355ff3ff353333333333353333333333
 __gff__
-0002020202020202020000000000000000000000000000000000000000000000000000000000000000000202020200000000000000000000000002020202000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0002020202020202020800100010000000000000000000000000001000100000000000000000000000020202040404000002048808108882000202020404040002020000000000000202020202020200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000002020000000000000000000000000000020200000000000000000202000000000000000000000000000002020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __map__
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -325,16 +904,26 @@ __map__
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-4041424340414243404141434041414341000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+4041424340414243404141434041414300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 5051515350525253505151535051515300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 6061616360616163606162636061626300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __sfx__
-00010000000000000009050026500a0500a0500b0500815018150281502c150356502d1502d1502a15028150271500e05004650000001e4500e450000000c450000000f450000000000011450000000000008450
+000201000000000000220501f0501c0501905016050130501a0501d050220502405027050300502c05029050220501f0501c05016050190500e4501c0500c4501f0500f450230500000011450260500000029050
 001000000975009750097500875007750057500575005750047500475005750067500775008750087500875008750087500775006750067500675006750077500775008750097500b7500b7500b7500b7500b750
 00100000081500815009150091500915007150051500415004150041500515006150071500715008150081500915009150091500815007150071500615005150051500615008150091500915009150091500a150
 00100000000000825008250000000825008250000000825000000082500000007250072500725007250032000720006250062500625006250062500725008250082500925002200092500925009250092500a250
 001000000e0500e0500e0500e0500e0500e0500d0500d0500d0500c0500b050090500805008050090500a0500a0500a0500a0500a0500a0500b0500b0500c0500d0500e0500f0501005010050100501005010050
+0002000036550335502d5402651023510205201c5200a5301854011540105401253010510105300d5200b5100a5100b5100d5101051012510165101a5101c530205402255025550285502c550315503355037510
+001000000f0500e0500000000000130501305000000000000d050000000d0500000000000100500f0501105000001000000f0500d0500000000000130501305000000000000d050000000d050000000000013050
+001000000c5500b55000000000000c5500955000000000000b550000000a55000000000000c5500a5500c55000001000000b5500855000000000000f5500d55000000000000b5500000009550000000000013000
+001000000000027700257500770000000267500000000000267500000000000000002175000000000001f750000000d700007001f7500000020700000001e75000000000001e7500170021700267001670001700
+001000000615006150071500715007150071500715007150071500715006150061500715007150071500815008150081500815008150081500815008150081500915009150091500715007150071500615006150
+00100000000001b550000001355000000000001a5500000000000000001b5500000012550115000000014550000001355000000000000e5500000000000000001d55000000000000000011550000000000000000
 __music__
-02 01010101
+00 01010101
 02 01024304
+04 00050144
+01 01060748
+02 01060708
+03 090a0644
 
